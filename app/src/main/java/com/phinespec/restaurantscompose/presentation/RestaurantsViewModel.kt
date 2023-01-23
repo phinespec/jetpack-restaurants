@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.phinespec.restaurantscompose.MainApplication
+import com.phinespec.restaurantscompose.data.local.RestaurantsDb
 import com.phinespec.restaurantscompose.data.remote.RestaurantsApiService
 import com.phinespec.restaurantscompose.model.Restaurant
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -12,6 +14,9 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import retrofit2.HttpException
+import java.net.ConnectException
+import java.net.UnknownHostException
 import javax.inject.Inject
 
 private const val TAG = "RestaurantViewModel"
@@ -21,6 +26,8 @@ class RestaurantsViewModel @Inject constructor(
     private val stateHandle: SavedStateHandle,
     private val restaurantsApiService: RestaurantsApiService
 ) : ViewModel() {
+
+    private val restaurantsDao = RestaurantsDb.getDaoInstance(MainApplication.getAppContext())
 
     private val errorHandler = CoroutineExceptionHandler { _, exception ->
         exception.printStackTrace()
@@ -36,11 +43,28 @@ class RestaurantsViewModel @Inject constructor(
     }
 
     // get all the restaurants from the remote server
+    // if successful store them in the local room DB
+    // if no connection load restaurants from room DB
     // set the state value to the result restored from stateHandle
     private suspend fun getRestaurants() {
-        val result = restaurantsApiService.getRestaurants()
-        withContext(Dispatchers.Main) {
-            _state.value = result.restoreFavorites()
+        try {
+            val restaurants = restaurantsApiService.getRestaurants()
+            restaurantsDao.addAll(restaurants)
+            withContext(Dispatchers.Main) {
+                _state.value = restaurants.restoreFavorites()
+            }
+        } catch (e: Exception) {
+            when (e) {
+                is UnknownHostException,
+                is ConnectException,
+                is HttpException -> {
+                    val restaurants = restaurantsDao.getAll()
+                    withContext(Dispatchers.Main) {
+                        _state.value = restaurants.restoreFavorites()
+                    }
+                }
+                else -> throw e
+            }
         }
     }
 
